@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link href="https://fonts.googleapis.com/css?family=Ubuntu:300,400,700&amp;subset=cyrillic" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css?family=Open+Sans:300,400,700&amp;subset=cyrillic" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css?family=Roboto:300,400,700&amp;subset=cyrillic" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css?family=Playfair+Display:400,400i|Tinos:400,400i&amp;subset=cyrillic" rel="stylesheet">
+	<script type="text/javascript" src="/shared/3rdparty/jquery/jquery.js" language="javascript1.1"></script>
+	<script src="index.js"></script>
+	<style>
+		* { box-sizing: border-box; }
+		body, html { height: 100%; }
+		body { background-color: #000000; color: #ffffff; }
+		h1 { font-family: "Playfair Display"; font-size: 30px; padding: 10px 0px; margin: 0px; }
+		.field-box { border: 2px solid #d0d0d0; float: left; }
+		.field { position: relative; width: 2000px; height: 1200px; }
+		.field .tile { position: absolute; width: 50px; height: 50px; background-size: 100%; background-image: url(images/tile-.png); z-index: 5; }
+		.field .tileW { background-image: url(images/tile-W.png); }
+		.field .tileE { background-image: url(images/tile-E.png); z-index: 10; }
+		.field .tileP { background-image: url(images/tile-P.png); z-index: 10; }
+		.field .tileHP { background-image: url(images/tile-HP.png); z-index: 9; }
+		.field .tileSW { background-image: url(images/tile-SW.png); z-index: 9; }
+		.field .tile .health { background-color: #ff0000; z-index: 11; position: absolute; left: 0px; top: 0px; height: 3px; }
+		.field .tileP .health { background-color: #00ff00; z-index: 11; position: absolute; left: 0px; top: 0px; height: 3px; }
+		.inventory-box { border: 2px solid #d0d0d0; float: left; }
+		.inventory { position: relative; width: 800px; height: 32px; }
+		.cl { clear: both; display: block; }
+	</style>
+</head>
+	<body>
+		<h1>Игровое поле</h1>
+		<div class="field-box"><div class="field" id="game-field"></div></div>
+		<div class="cl"></div>
+		<!--h1>Инвентарь</h1>
+		<div class="inventory-box"><div class="inventory"></div></div-->
+
+		<script>
+			class Game {
+			  constructor() {
+				this.field    = document.getElementById("game-field");
+				this.tileSize = 50;
+				this.width    = 40;
+				this.height   = 24;
+
+				this.map = Array.from({ length: this.height }, () => Array(this.width).fill('W'));
+				this.hero = { x: 0, y: 0, hp: 5, maxHp: 5, attack: 1 };
+				this.enemies = new Map();
+				this.inputEnabled = true;
+			  }
+
+			  init() {
+				this.generateCorridors();
+				this.generateRooms();
+
+				this.placeSwords(2);
+				this.placePotions(10);
+				this.placeHero();
+				this.placeEnemies(10, 3);
+
+				this.render();
+				this.enableKeyboard();
+			  }
+
+			  rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+
+			  generateCorridors() {
+				const vCount = this.rand(3, 5);
+				const hCount = this.rand(3, 5);
+				const vXs = this.pickUnique(vCount, 0, this.width - 1);
+				const hYs = this.pickUnique(hCount, 0, this.height - 1);
+				for (const x of vXs) for (let y = 0; y < this.height; y++) this.map[y][x] = '.';
+				for (const y of hYs) for (let x = 0; x < this.width;  x++) this.map[y][x] = '.';
+			  }
+
+			  generateRooms() {
+				const roomsCount = this.rand(5, 10);
+				let placed = 0, tries = 0;
+				while (placed < roomsCount && tries < roomsCount * 100) {
+				  tries++;
+				  const rw = this.rand(3, 8), rh = this.rand(3, 8);
+				  const maxX = this.width - rw, maxY = this.height - rh;
+				  if (maxX < 0 || maxY < 0) break;
+				  const rx = this.rand(0, maxX), ry = this.rand(0, maxY);
+
+				  let touches = false;
+				  for (let y = ry - 1; y <= ry + rh && !touches; y++)
+					for (let x = rx - 1; x <= rx + rw && !touches; x++)
+					  if (y>=0 && y<this.height && x>=0 && x<this.width && this.map[y][x] === '.') touches = true;
+				  if (!touches) continue;
+
+				  for (let y = ry; y < ry + rh; y++)
+					for (let x = rx; x < rx + rw; x++)
+					  this.map[y][x] = '.';
+
+				  placed++;
+				}
+			  }
+
+			  placeSwords(count) {
+				const free = this.collectFree();
+				for (const c of this.pickKAndConsume(free, count)) this.map[c.y][c.x] = 'SW';
+			  }
+
+			  placePotions(count) {
+				const free = this.collectFree();
+				for (const c of this.pickKAndConsume(free, count)) this.map[c.y][c.x] = 'HP';
+			  }
+
+			  placeHero() {
+				const free = this.collectFree();
+				const cell = this.pickKAndConsume(free, 1)[0];
+				if (cell) {
+				  this.map[cell.y][cell.x] = 'P';
+				  this.hero.x = cell.x;
+				  this.hero.y = cell.y;
+				}
+			  }
+
+			  placeEnemies(count, hpEach = 3) {
+				const free = this.collectFree();
+				for (const c of this.pickKAndConsume(free, count)) {
+				  this.map[c.y][c.x] = 'E';
+				  const key = this._key(c.x, c.y);
+				  this.enemies.set(key, { x: c.x, y: c.y, hp: hpEach, maxHp: hpEach });
+				}
+			  }
+
+			  enableKeyboard() {
+				window.addEventListener('keydown', (e) => this.handleKey(e));
+			  }
+
+			  handleKey(e) {
+				if (!this.inputEnabled) return;
+
+				if (e.code === 'Space') {
+				  e.preventDefault();
+				  this.attackAround();
+				  this.enemiesAttackAroundHero();
+				  this.enemiesRandomStep();
+				  this.render();
+				  return;
+				}
+
+				let dx = 0, dy = 0;
+				switch (e.code) {
+				  case 'KeyW': case 'ArrowUp':    dy = -1; break;
+				  case 'KeyS': case 'ArrowDown':  dy =  1; break;
+				  case 'KeyA': case 'ArrowLeft':  dx = -1; break;
+				  case 'KeyD': case 'ArrowRight': dx =  1; break;
+				  default: return;
+				}
+				e.preventDefault();
+
+				const newX = this.hero.x + dx;
+				const newY = this.hero.y + dy;
+				if (newX < 0 || newX >= this.width || newY < 0 || newY >= this.height) return;
+
+				const target = this.map[newY][newX];
+				if (target === 'W' || target === 'E') return;
+
+				if (target === 'HP') this.healHero(1);
+				if (target === 'SW') this.increaseAttack(1);
+
+				this.map[this.hero.y][this.hero.x] = '.';
+				this.hero.x = newX;
+				this.hero.y = newY;
+				this.map[newY][newX] = 'P';
+
+				this.enemiesAttackAroundHero();
+				this.enemiesRandomStep();
+
+				this.render();
+			  }
+
+			  healHero(amount = 1) {
+				this.hero.hp = Math.min(this.hero.maxHp, this.hero.hp + amount);
+			  }
+
+			  increaseAttack(amount = 1) {
+				this.hero.attack += amount;
+				console.log(`Сила удара героя: ${this.hero.attack}`);
+			  }
+
+			  attackAround() {
+				const dirs = [
+				  {dx:  1, dy:  0}, {dx: -1, dy:  0}, {dx:  0, dy:  1}, {dx:  0, dy: -1},
+				  {dx:  1, dy:  1}, {dx:  1, dy: -1}, {dx: -1, dy:  1}, {dx: -1, dy: -1}
+				];
+				for (const {dx, dy} of dirs) {
+				  const x = this.hero.x + dx;
+				  const y = this.hero.y + dy;
+				  if (!this._inBounds(x, y)) continue;
+				  if (this.map[y][x] !== 'E') continue;
+
+				  const key = this._key(x, y);
+				  const enemy = this.enemies.get(key);
+				  if (!enemy) continue;
+
+				  enemy.hp -= this.hero.attack;
+				  if (enemy.hp <= 0) {
+					this.map[y][x] = '.';
+					this.enemies.delete(key);
+				  } else {
+					this.enemies.set(key, enemy);
+				  }
+				}
+			  }
+
+			  enemiesAttackAroundHero() {
+				if (this.hero.hp <= 0) return;
+				const dirs = [
+				  {dx:  1, dy:  0}, {dx: -1, dy:  0}, {dx:  0, dy:  1}, {dx:  0, dy: -1},
+				  {dx:  1, dy:  1}, {dx:  1, dy: -1}, {dx: -1, dy:  1}, {dx: -1, dy: -1}
+				];
+				let attackers = 0;
+				for (const {dx, dy} of dirs) {
+				  const x = this.hero.x + dx, y = this.hero.y + dy;
+				  if (!this._inBounds(x, y)) continue;
+				  if (this.map[y][x] === 'E') attackers++;
+				}
+				if (attackers > 0) {
+				  this.hero.hp -= attackers;
+				  if (this.hero.hp <= 0) {
+					this.hero.hp = 0;
+					this.inputEnabled = false;
+					console.log("Герой погиб.");
+				  }
+				}
+			  }
+
+			  enemiesRandomStep() {
+				const dirs = [
+				  {dx:  1, dy:  0}, {dx: -1, dy:  0},
+				  {dx:  0, dy:  1}, {dx:  0, dy: -1}
+				];
+
+				const list = Array.from(this.enemies.values());
+				this._shuffle(list);
+
+				const reserved = new Set();
+				const moves = [];
+
+				for (const e of list) {
+				  if (this.map[e.y][e.x] !== 'E') continue;
+
+				  const candidates = [];
+				  for (const {dx, dy} of dirs) {
+					const nx = e.x + dx, ny = e.y + dy;
+					if (!this._inBounds(nx, ny)) continue;
+					if (this.map[ny][nx] !== '.') continue;
+					if (nx === this.hero.x && ny === this.hero.y) continue;
+					const key = this._key(nx, ny);
+					if (reserved.has(key)) continue;
+					candidates.push({x: nx, y: ny, key});
+				  }
+				  if (candidates.length === 0) continue;
+
+				  const choice = candidates[Math.floor(Math.random() * candidates.length)];
+				  reserved.add(choice.key);
+				  moves.push({from: {x: e.x, y: e.y}, to: {x: choice.x, y: choice.y}});
+				}
+
+				for (const m of moves) {
+				  const oldKey = this._key(m.from.x, m.from.y);
+				  const enemy = this.enemies.get(oldKey);
+				  if (!enemy) continue;
+				  this.map[m.from.y][m.from.x] = '.';
+				  this.enemies.delete(oldKey);
+
+				  enemy.x = m.to.x; enemy.y = m.to.y;
+				  const newKey = this._key(enemy.x, enemy.y);
+				  this.map[enemy.y][enemy.x] = 'E';
+				  this.enemies.set(newKey, enemy);
+				}
+			  }
+
+			  collectFree() {
+				const cells = [];
+				for (let y = 0; y < this.height; y++)
+				  for (let x = 0; x < this.width; x++)
+					if (this.map[y][x] === '.') cells.push({x, y});
+				return cells;
+			  }
+
+			  pickKAndConsume(arr, k) {
+				for (let i = arr.length - 1; i > 0; i--) {
+				  const j = Math.floor(Math.random() * (i + 1));
+				  [arr[i], arr[j]] = [arr[j], arr[i]];
+				}
+				return arr.splice(0, Math.min(k, arr.length));
+			  }
+
+			  pickUnique(count, min, max) {
+				const need = Math.min(count, max - min + 1);
+				const set = new Set();
+				while (set.size < need) set.add(this.rand(min, max));
+				return [...set].sort((a, b) => a - b);
+			  }
+
+			  _key(x, y) { return `${x},${y}`; }
+			  _inBounds(x, y) { return x >= 0 && x < this.width && y >= 0 && y < this.height; }
+			  _shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random()* (i+1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } }
+
+			  render() {
+				this.field.innerHTML = "";
+				for (let y = 0; y < this.height; y++) {
+				  for (let x = 0; x < this.width; x++) {
+					const el = document.createElement("div");
+					el.classList.add("tile");
+					const v = this.map[y][x];
+
+					if (v === 'W') {
+					  el.classList.add("tileW");
+					} else if (v === 'SW') {
+					  el.classList.add("tileSW");
+					} else if (v === 'HP') {
+					  el.classList.add("tileHP");
+					} else if (v === 'P') {
+					  el.classList.add("tileP");
+					  const bar = document.createElement("div");
+					  bar.classList.add("health");
+					  const ratio = this.hero.maxHp ? this.hero.hp / this.hero.maxHp : 0;
+					  bar.style.width = Math.max(0, Math.min(1, ratio)) * this.tileSize + "px";
+					  bar.style.height = "3px";
+					  bar.style.position = "absolute";
+					  bar.style.top = "0px";
+					  bar.style.left = "0px";
+					  el.appendChild(bar);
+					} else if (v === 'E') {
+					  el.classList.add("tileE");
+					  const bar = document.createElement("div");
+					  bar.classList.add("health");
+					  const enemy = this.enemies.get(this._key(x, y));
+					  const ratio = enemy ? (enemy.hp / enemy.maxHp) : 0;
+					  bar.style.width = Math.max(0, Math.min(1, ratio)) * this.tileSize + "px";
+					  bar.style.height = "3px";
+					  bar.style.position = "absolute";
+					  bar.style.top = "0px";
+					  bar.style.left = "0px";
+					  el.appendChild(bar);
+					}
+
+					el.style.left = (x * this.tileSize) + "px";
+					el.style.top  = (y * this.tileSize) + "px";
+					this.field.appendChild(el);
+				  }
+				}
+			  }
+			}
+
+			const game = new Game();
+			game.init();
+		</script>
+	</body>
+</html>
